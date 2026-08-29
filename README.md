@@ -137,4 +137,4 @@ timing is never reported as an algorithmic comparison.
 
 ---
 
-Sushant Paudel · `TODO: contact` · `TODO: license`
+Sushant Paudel · `passing_hardy_0j@icloud.com` · `Copyright (c) 2026 sushant8099`
