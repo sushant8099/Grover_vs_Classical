@@ -68,12 +68,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-<!-- TODO: generate with `pip freeze > requirements.txt` and state the versions
-     you actually pinned. The Qiskit API has changed enough between versions
-     that unpinned installs will not reproduce these results. -->
-
-Pinned: Python `TODO`, Qiskit `TODO`, qiskit-aer `TODO`,
-qiskit-ibm-runtime `TODO`, numpy `TODO`, scipy `TODO`, matplotlib `TODO`.
+Pinned: Python `3.14.7`, Qiskit `2.5.2`, qiskit-aer `0.17.2`,
+qiskit-ibm-runtime `0.49.0`, numpy `2.5.2`, scipy `1.18.1`, matplotlib `3.11.1`.
 
 ## Running
 
