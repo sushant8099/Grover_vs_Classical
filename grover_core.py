@@ -76,22 +76,29 @@ def diffuser(n: int) -> QuantumCircuit:
     return qc
 
 
-def grover_circuit(n: int, marked: int, k: int, measure: bool = True) -> QuantumCircuit:
+def grover_circuit(n: int, marked: int, k: int, measure: bool = True,
+                   ancillas: int = 0) -> QuantumCircuit:
     """Full Grover circuit with exactly k iterations.
 
     k is a free parameter on purpose: k=0 (no iterations, uniform random) and
     k > k_theoretical (over-rotation) are both legal and both needed for the
     H2 sweep.
+
+    ancillas adds that many idle qubits after the n search qubits. No gate acts
+    on them here; the transpiler may borrow them as clean helper qubits when it
+    decomposes the multi-controlled Z. Only the n search qubits are measured.
     """
     if not 0 <= marked < 2 ** n:
         raise ValueError(f"marked must be in [0, {2**n}) for n={n}")
     if k < 0:
         raise ValueError("k must be >= 0")
+    if ancillas < 0:
+        raise ValueError("ancillas must be >= 0")
 
     orc = phase_oracle(n, marked)
     dif = diffuser(n)
 
-    qc = QuantumCircuit(n, n, name=f"Grover(n={n},k={k})")
+    qc = QuantumCircuit(n + ancillas, n, name=f"Grover(n={n},k={k})")
     qc.h(range(n))                      # uniform superposition over all N = 2**n
     for _ in range(k):
         qc.compose(orc, range(n), inplace=True)
