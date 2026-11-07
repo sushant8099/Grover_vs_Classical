@@ -8,6 +8,12 @@ parameterised by the two-qubit gate error rate.
 This is the H2 instrument: it locates the EMPIRICAL optimum k* and compares it
 to the theoretical k_th = floor((pi/4) sqrt(N/M)).
 
+Revision: the sweep runs for every n in N_LIST and every ancilla count in
+ANCILLA_ARMS. When N <= MAX_PLACEMENTS every possible marked item is used
+exactly once (no repeats). The standard error across placements is recorded
+for error bars. Files for the 1-ancilla arm end in _anc1; files from the
+optional NOISY_COMPILE = "direct" check end in _direct.
+
 Run:   python run_ksweep.py
 Out:   results/ksweep_n{N}.csv  and  figures/ksweep_n{N}.png
 """
@@ -17,6 +23,7 @@ from __future__ import annotations
 import os
 import csv
 import random
+import statistics
 
 from PIL import Image
 
@@ -32,15 +39,22 @@ from grover_core import (
 )
 
 # ---------------------------------------------------------------- config ----
-N_QUBITS       = 4          # n. N = 2**n items.
+N_LIST         = (4, 5, 6)  # n values to sweep. N = 2**n items.
+ANCILLA_ARMS   = (0, 1)     # idle helper qubits; 0 is the original circuit
 SHOTS          = 4096       # matches the protocol in the write-up
-N_PLACEMENTS   = 30         # >= 30 randomized marked-item placements
+N_PLACEMENTS   = 30         # random distinct placements, used only if N > MAX_PLACEMENTS
+MAX_PLACEMENTS = 64         # N <= this: use EVERY marked item exactly once
 K_MAX          = None       # None -> sweep to 2 * k_theoretical
 OPT_LEVEL      = 2          # FIXED across all comparisons. Log it.
 SEED           = 20260815   # fixed seed for randomized placement
 EPS_2Q         = 8e-3       # two-qubit depolarizing error rate
 EPS_1Q         = 2e-4       # single-qubit depolarizing error rate
 BASIS          = ["rz", "sx", "x", "cz"]   # rz is virtual on IBM -> noiseless
+NOISY_COMPILE  = "two-step" # "two-step" (original): compile for the real device,
+                            #   then re-express in BASIS at optimization level 0.
+                            # "direct" (sensitivity check): compile once, straight
+                            #   to BASIS on the same coupling map. This avoids the
+                            #   ~3x redundant single-qubit gates of "two-step".
 # ----------------------------------------------------------------------------
 
 
@@ -61,11 +75,25 @@ def measure_p(circuit, backend, marked_bits, shots=SHOTS, seed=None) -> float:
     return counts.get(marked_bits, 0) / shots
 
 
-def main() -> None:
+def arm_suffix(ancillas: int) -> str:
+    """File-name tag for one arm: '' for the original circuit, '_anc1' for one
+    ancilla, plus '_direct' when NOISY_COMPILE is 'direct'."""
+    tag = "" if ancillas == 0 else f"_anc{ancillas}"
+    return tag + ("_direct" if NOISY_COMPILE == "direct" else "")
+
+
+def standard_error(values) -> float:
+    """Standard error of the mean across placements (for error bars)."""
+    if len(values) < 2:
+        return float("nan")
+    return statistics.stdev(values) / len(values) ** 0.5
+
+
+def run_sweep(n: int, ancillas: int) -> None:
+    """One k-sweep: a single n and a single ancilla count."""
     os.makedirs("results", exist_ok=True)
     os.makedirs("figures", exist_ok=True)
 
-    n = N_QUBITS
     k_th = k_theoretical(n)
     k_max = K_MAX if K_MAX is not None else max(2 * k_th, 4)
 
@@ -76,11 +104,15 @@ def main() -> None:
     )
 
     rng = random.Random(SEED)
-    placements = [rng.randrange(2 ** n) for _ in range(N_PLACEMENTS)]
+    if 2 ** n <= MAX_PLACEMENTS:
+        placements = list(range(2 ** n))                       # every item, once
+    else:
+        placements = rng.sample(range(2 ** n), N_PLACEMENTS)   # distinct items
 
     rows = []
-    print(f"n={n}  N={2**n}  k_th={k_th}  sweeping k=0..{k_max}")
-    print(f"{'k':>3} {'p_ideal_th':>11} {'p_ideal':>9} {'p_noisy':>9} "
+    print(f"\nn={n}  N={2**n}  ancillas={ancillas}  placements={len(placements)}  "
+          f"k_th={k_th}  sweeping k=0..{k_max}")
+    print(f"{'k':>3} {'p_ideal_th':>11} {'p_ideal':>9} {'p_noisy':>9} {'se':>7} "
           f"{'2q gates':>9} {'E[Q] noisy':>11} {'p*(N)':>7}")
 
     for k in range(k_max + 1):
@@ -88,7 +120,7 @@ def main() -> None:
         twoq = None
 
         for j, marked in enumerate(placements):
-            qc = grover_circuit(n, marked, k)
+            qc = grover_circuit(n, marked, k, ancillas=ancillas)
             bits = index_to_bitstring(marked, n)
 
             # Ideal: transpile only to the simulator's own basis, no routing.
@@ -101,24 +133,35 @@ def main() -> None:
             qc_hw = transpile(qc, hardware_target, optimization_level=OPT_LEVEL,
                               seed_transpiler=SEED)
             qc_noisy = transpile(qc_hw, basis_gates=BASIS, optimization_level=0)
+            if NOISY_COMPILE == "direct":     # sensitivity check: one compile only
+                qc_noisy = transpile(qc, coupling_map=hardware_target.coupling_map,
+                                     basis_gates=BASIS, optimization_level=OPT_LEVEL,
+                                     seed_transpiler=SEED)
             if twoq is None:
                 twoq = qc_noisy.count_ops().get("cz", 0)
             p_noisy_runs.append(measure_p(qc_noisy, noisy_backend, bits, seed=SEED + j))
 
         p_ideal = sum(p_ideal_runs) / len(p_ideal_runs)
         p_noisy = sum(p_noisy_runs) / len(p_noisy_runs)
+        p_ideal_se = standard_error(p_ideal_runs)
+        p_noisy_se = standard_error(p_noisy_runs)
         p_th = ideal_success_probability(n, k)
         eq = quantum_expected_queries(k, p_noisy)
+        # error on E[Q] = (k+1)/p, by first-order propagation of the error on p
+        eq_se = (k + 1) * p_noisy_se / p_noisy ** 2 if p_noisy > 0 else float("inf")
         ps = p_threshold(n, k)
 
         rows.append(dict(n=n, N=2 ** n, k=k, p_theory=p_th, p_ideal=p_ideal,
                          p_noisy=p_noisy, two_qubit_gates=twoq,
                          expected_queries_noisy=eq, p_threshold=ps,
-                         classical_queries=classical_expected_queries(n)))
-        print(f"{k:>3} {p_th:>11.4f} {p_ideal:>9.4f} {p_noisy:>9.4f} "
+                         classical_queries=classical_expected_queries(n),
+                         ancillas=ancillas, placements=len(placements),
+                         p_ideal_se=p_ideal_se, p_noisy_se=p_noisy_se,
+                         expected_queries_noisy_se=eq_se))
+        print(f"{k:>3} {p_th:>11.4f} {p_ideal:>9.4f} {p_noisy:>9.4f} {p_noisy_se:>7.4f} "
               f"{twoq:>9} {eq:>11.2f} {ps:>7.4f}")
 
-    with open(f"results/ksweep_n{n}.csv", "w", newline="") as f:
+    with open(f"results/ksweep_n{n}{arm_suffix(ancillas)}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
@@ -130,11 +173,18 @@ def main() -> None:
     print("H2 signal: k*_noisy < k_theoretical" if k_star_noisy < k_th
           else "H2 signal: no shift at this n / this error rate")
 
-    plot(rows, n, k_th)
-    print(f"\nWrote results/ksweep_n{n}.csv and figures/ksweep_n{n}.png")
+    plot(rows, n, k_th, ancillas)
+    print(f"\nWrote results/ksweep_n{n}{arm_suffix(ancillas)}.csv and "
+          f"figures/ksweep_n{n}{arm_suffix(ancillas)}.png")
 
 
-def plot(rows, n, k_th) -> None:
+def main() -> None:
+    for n in N_LIST:
+        for ancillas in ANCILLA_ARMS:
+            run_sweep(n, ancillas)
+
+
+def plot(rows, n, k_th, ancillas=0) -> None:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -158,19 +208,24 @@ def plot(rows, n, k_th) -> None:
             linestyle="-.", marker="^", markersize=6, label="noisy simulator")
     ax.plot(ks, [r["p_threshold"] for r in rows], color=OKABE_ITO["green"],
             linestyle=":", marker="D", markersize=5, label=r"threshold $p^*(N)$")
+    # error bars: +-1 standard error across placements (no legend entry)
+    ax.errorbar(ks, [r["p_ideal"] for r in rows], yerr=[r["p_ideal_se"] for r in rows],
+                fmt="none", ecolor=OKABE_ITO["blue"], capsize=3)
+    ax.errorbar(ks, [r["p_noisy"] for r in rows], yerr=[r["p_noisy_se"] for r in rows],
+                fmt="none", ecolor=OKABE_ITO["vermillion"], capsize=3)
 
     ax.axvline(k_th, color=OKABE_ITO["black"], linewidth=1, alpha=0.5)
     ax.annotate(r"$k_{\mathrm{th}}$", xy=(k_th, 1.02), ha="center", fontsize=10)
 
     ax.set_xlabel("Grover iterations $k$")
     ax.set_ylabel("success probability $p$")
-    ax.set_title(f"k-sweep at n = {n}  (N = {2**n})")
     ax.set_ylim(0, 1.08)
     ax.grid(alpha=0.25, linestyle="-", linewidth=0.5)
     ax.legend(frameon=False, fontsize=9)
     fig.tight_layout()
-    fig.savefig(f"figures/ksweep_n{n}.png", dpi=200)
-    Image.open(f"figures/ksweep_n{n}.png").convert("L").save(f"figures/ksweep_n{n}_gray.png")
+    out = f"figures/ksweep_n{n}{arm_suffix(ancillas)}"
+    fig.savefig(f"{out}.png", dpi=200)
+    Image.open(f"{out}.png").convert("L").save(f"{out}_gray.png")
 
 
 if __name__ == "__main__":
