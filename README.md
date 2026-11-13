@@ -162,9 +162,8 @@ Narrow on purpose, and written down in advance:
 
 ## How to cite
 
-> S. Paudel, *Where Grover's Quadratic Advantage Ends: The Compiled Cost of a
-> Unit-Cost Query*, arXiv:XXXX.XXXXX (2026).
-> Code and data: https://doi.org/10.5281/zenodo.XXXXXXX
+> S. Paudel, *Where Grover's Quadratic Advantage Ends: The Compiled Cost of a Unit-Cost Query, and the Spare Qubit That Halves It*, arXiv:XXXX.XXXXX (2026).
+> Code and data: https://doi.org/10.5281/zenodo.24202991
 
 ## Key references
 
