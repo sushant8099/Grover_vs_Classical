@@ -179,4 +179,4 @@ The full reference list is in the paper.
 
 ---
 
-Sushant Paudel · sushantpaudel8099@gmail.com · ORCID [0009-0006-8766-9883](https://orcid.org/0009-0006-8766-9883) · MIT License (see `LICENSE`)
+Sushant Paudel · passing_hardy_0j@icloud.com · ORCID [0009-0006-8766-9883](https://orcid.org/0009-0006-8766-9883) · MIT License (see `LICENSE`)
